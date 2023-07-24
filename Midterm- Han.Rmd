@@ -1,0 +1,180 @@
+---
+title: "Midterm"
+author: "Han Liu"
+date: "7/18/2023"
+output: html_document
+---
+Roadmap:
+1.Time series: the data is the monthly retail sales of electricity in the United States from U.S Energy Information Administration
+
+2.Data split: use the first four year of data to build three models + one ensemble model(average of the three forecast for the last year) 
+
+
+##Load Data 
+```{r}
+setwd('/Users/hanliu/Downloads')
+mydata =read.table ("/Users/hanliu/Downloads/Retail_sales_of_electricity_United_States_monthly.csv", sep = ",", header = TRUE)
+
+```
+
+##Clean Data
+```{r}
+
+library(tidyverse)
+library(tsibble)
+
+# data column
+colnames(mydata)[1] ="Month"
+colnames(mydata)[2] ="Commercial_million_kilowatthours"
+mydata = mydata[-1,]
+
+mydata = mydata %>%
+  mutate (Month = yearmonth(Month))%>%
+  tsibble(index = Month)
+
+mydata$Commercial_million_kilowatthours <- as.numeric(mydata$Commercial_million_kilowatthours)
+
+```
+
+##My time series 
+```{r}
+library(ggplot2)
+library(ggfortify)
+library(feasts)
+myts = ts(mydata$Commercial_million_kilowatthours, start = c(2001,1), frequency = 12)
+
+autoplot(myts) +
+  labs(x = "Month", y = "Electricity Consumed (Million Kilowatthours)", title = "Time Series for US Retail Sales of Electricity in Commercial Sector (Monthly)")
+
+mydata %>% gg_season(Commercial_million_kilowatthours, labels = "both") + ylab ("Electricity Consumed")
+
+```
+
+## Time series Evaluation
+```{r}
+
+library(forecast)
+#the number of non-seasonal differences needed to make a time series stationary
+ndiffs(myts)
+#the number of seasonal differences needed to make a time series stationary
+nsdiffs(myts)
+
+myts %>% 
+  diff(lag=12) %>% 
+  ggtsdisplay()
+
+```
+
+
+##Training and Test Set
+```{r}
+
+mydata$Month <- as.Date(mydata$Month)
+
+# Split the data into training and test sets based on the specified date ranges
+mydata.train <- mydata[mydata$Month <= as.Date("2017-12-31"), ]
+mydata.test <- mydata[mydata$Month >= as.Date("2018-01-01"), ]
+
+myts.train <- window(myts, end=c(2017,12))
+myts.test <- window(myts, start=2018)
+
+autoplot(myts) +
+  autolayer(myts.train, series="Training") +
+  autolayer(myts.test, series="Test")
+```
+
+
+## 2.1 Build auto Arima Model
+```{r}
+library(forecast)
+fit_arima = auto.arima(myts.train)
+checkresiduals(fit_arima)
+
+#Ljung-Box Test
+for (i in 1:30){
+  print(Box.test(fit_arima$residuals,lag=i,type='Ljung-Box'))
+}
+
+myarima_predict1 = forecast(fit_arima,24)
+
+plot(myarima_predict1)
+
+
+
+```
+```{r}
+# Calculating the accuracy of ARIMA forecasts
+
+acc.arima=accuracy(myarima_predict1,myts.test)
+cat("Accuracy of ETS Forecasts\n ")
+acc.arima
+```
+
+
+
+#2.2 Build ETS Model
+```{r}
+datats = window(myts.train, start=2001)
+fit_ets <- ets(datats)
+summary(fit_ets)
+autoplot(fit_ets)
+
+myets_predict2=forecast(fit_ets, 24)
+
+checkresiduals(fit_ets)
+plot(myets_predict2)
+```
+
+
+```{r}
+
+# Calculating the accuracy of ETS forecasts
+acc.ets=accuracy(myets_predict2, myts.test)
+cat("Accuracy of ETS Forecasts\n ")
+print(acc.ets)
+```
+
+
+##2.3 Build snaive model 
+```{r}
+fit_snaive <- snaive(myts.train)
+checkresiduals(fit_snaive)
+
+mysnaive_predict3=forecast(fit_snaive, h=24)
+plot(mysnaive_predict3)
+```
+
+
+```{r}
+# Calculating the accuracy of snaive forecasts
+acc.snaive=accuracy(mysnaive_predict3, myts.test)
+cat("Accuracy of snaive Forecasts\n ")
+print(acc.snaive)
+```
+
+## 2.4 Build ensemble model for the last year
+```{r}
+forecast_ets <- myets_predict2$mean
+forecast_arima <- myarima_predict1$mean
+forecast_snaive <- mysnaive_predict3$mean
+fit.ensemble <- (forecast_ets + forecast_arima + forecast_snaive) / 3
+autoplot(fit.ensemble)
+myensemble_predict4=forecast(fit.ensemble, 24)
+
+checkresiduals(myensemble_predict4)
+
+plot(myensemble_predict4, main = "Forecasts from Ensemble Model")
+
+
+```
+
+
+```{r}
+# Calculating the accuracy of forecasts
+acc.ensemble=accuracy(myensemble_predict4, myts.test)
+cat("Accuracy of ETS Forecasts\n ")
+print(acc.ensemble)
+
+```
+
+
